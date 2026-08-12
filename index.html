@@ -1,0 +1,143 @@
+<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"><title>TEST</title><style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#111;overflow:hidden}
+canvas{display:block;width:100vw;height:100vh}
+#hud{position:fixed;top:4px;left:4px;color:#fff;font-size:12px;background:rgba(0,0,0,0.6);padding:4px 8px;z-index:10}
+</style></head><body>
+<canvas id="c"></canvas>
+<div id="hud">STARTE...</div>
+<script>
+const W=640,H=360;
+const c=document.getElementById('c');
+c.width=W;c.height=H;
+const ctx=c.getContext('2d');
+ctx.imageSmoothingEnabled=false;
+
+let wave=1,timer=0,enemies=[],fireballs=[],orbs=[],coins=[],dmgNums=[];
+let player={x:W/2,y:H/2,hp:8,mh:8,d:2,s:130};
+let active=true,inv=0,spawnCD=0,fireCD=0,weapons=[{cd:0,spd:0.3}];
+let kills=0,gold=0,xp=0,level=1,xpNext=10,score=0;
+
+// Joystick
+let joy={a:false,sx:0,sy:0,vx:0,vy:0};
+function getScale(){return c.getBoundingClientRect().width/W}
+c.addEventListener('touchstart',e=>{e.preventDefault();let t=e.changedTouches[0];let sc=getScale();let cx=t.clientX/sc,cy=t.clientY/sc;if(cx<W/2){joy.a=true;joy.sx=cx;joy.sy=cy}}});
+c.addEventListener('touchmove',e=>{e.preventDefault();let t=e.changedTouches[0];let sc=getScale();let cx=t.clientX/sc,cy=t.clientY/sc;if(joy.a){let dx=cx-joy.sx,dy=cy-joy.sy,len=Math.hypot(dx,dy);if(len>50){dx=dx/len*50;dy=dy/len*50}joy.vx=dx/50;joy.vy=dy/50}});
+c.addEventListener('touchend',e=>{joy.a=false;joy.vx=0;joy.vy=0});
+
+// Keyboard
+let keys={};
+document.addEventListener('keydown',e=>keys[e.code]=true);
+document.addEventListener('keyup',e=>keys[e.code]=false);
+
+// Game loop
+function r(a,b){return Math.random()*(b-a)+a}
+function d(a,b){return Math.hypot(a.x-b.x,a.y-b.y)}
+
+function spawn(){
+  let side=Math.floor(Math.random()*4);
+  let x=0,y=0;
+  if(side===0){x=r(0,W);y=-10}
+  else if(side===1){x=r(0,W);y=H+10}
+  else if(side===2){x=-10;y=r(0,H)}
+  else{x=W+10;y=r(0,H)}
+  let ec='#4f8';if(Math.random()<0.3)ec='#f44';
+  enemies.push({x,y,h:3+wave*0.5,mh:3+wave*0.5,d:Math.max(1,Math.floor((1+wave*0.1))),s:60+wave*5,c:ec});
+}
+
+function sh(){
+  let dx=1,dy=0;
+  let t=null,md=999;for(let e of enemies){let dd=d(player,e);if(dd<md){md=dd;t=e}}
+  if(t){let l=Math.hypot(t.x-player.x,t.y-player.y)||1;dx=(t.x-player.x)/l;dy=(t.y-player.y)/l}
+  fireballs.push({x:player.x,y:player.y,dx:dx*280,dy:dy*280,life:0});
+}
+
+function up(dt){
+  if(!active)return;
+  inv=Math.max(0,inv-dt);spawnCD-=dt;fireCD-=dt;
+  if(spawnCD<=0&&enemies.length<15){spawn();spawnCD=0.8}
+  
+  // Move
+  let mx=0,my=0;
+  if(joy.a){mx=joy.vx;my=joy.vy}
+  if(keys.KeyW||keys.ArrowUp)my=-1;
+  if(keys.KeyS||keys.ArrowDown)my=1;
+  if(keys.KeyA||keys.ArrowLeft)mx=-1;
+  if(keys.KeyD||keys.ArrowRight)mx=1;
+  let ml=Math.hypot(mx,my)||1;
+  player.x+=mx/ml*player.s*dt;player.y+=my/ml*player.s*dt;
+  player.x=Math.max(8,Math.min(W-8,player.x));
+  player.y=Math.max(8,Math.min(H-8,player.y));
+
+  // Fire
+  for(let w of weapons){w.cd-=dt;if(w.cd<=0){w.cd=w.spd;sh()}}
+
+  // Enemy AI
+  for(let i=enemies.length-1;i>=0;i--){
+    let e=enemies[i];
+    let vx=player.x-e.x,vy=player.y-e.y,vl=Math.hypot(vx,vy)||1;
+    e.x+=vx/vl*e.s*dt;e.y+=vy/vl*e.s*dt;
+    if(d(e,player)<18&&inv<=0){player.hp-=e.d;dmgNums.push({x:player.x,y:player.y-16,t:0,v:e.d,cl:'#f44'});inv=0.3}
+  }
+
+  // Fireball hits
+  for(let i=fireballs.length-1;i>=0;i--){
+    let f=fireballs[i];f.x+=f.dx*dt;f.y+=f.dy*dt;f.life+=dt;
+    if(f.life>3){fireballs.splice(i,1);continue}
+    for(let j=enemies.length-1;j>=0;j--){
+      let e=enemies[j];
+      if(d(f,e)<10){e.h-=player.d;fireballs.splice(i,1);dmgNums.push({x:e.x,y:e.y-12,t:0,v:player.d,cl:'#ff0'});
+        if(e.h<=0){score+=20;orbs.push({x:e.x,y:e.y,v:2});coins.push({x:e.x,y:e.y,v:2});kills++;enemies.splice(j,1)}
+        break;
+      }
+    }
+  }
+
+  // Pickups
+  for(let i=orbs.length-1;i>=0;i--){let o=orbs[i],di=d(o,player);if(di<14){xp+=o.v;if(xp>=xpNext){xp-=xpNext;level++;xpNext=Math.floor(xpNext*1.5)}orbs.splice(i,1);continue}let sp=200/Math.max(0.1,di);o.x+=(player.x-o.x)/di*sp*dt;o.y+=(player.y-o.y)/di*sp*dt}
+  for(let i=coins.length-1;i>=0;i--){let gc=coins[i],di=d(gc,player);if(di<14){gold+=gc.v;coins.splice(i,1);continue}let sp=160/Math.max(0.1,di);gc.x+=(player.x-gc.x)/di*sp*dt;gc.y+=(player.y-gc.y)/di*sp*dt}
+  for(let i=dmgNums.length-1;i>=0;i--){dmgNums[i].t+=dt;dmgNums[i].y-=50*dt;if(dmgNums[i].t>0.8)dmgNums.splice(i,1)}
+  if(player.hp<=0){active=false;document.getElementById('hud').innerText='GAME OVER Score:'+score}
+}
+
+function draw(){
+  ctx.fillStyle='#1a1a2e';ctx.fillRect(0,0,W,H);
+  ctx.strokeStyle='rgba(255,255,255,0.04)';ctx.lineWidth=0.5;
+  for(let x=0;x<W;x+=40){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,H);ctx.stroke()}
+  for(let y=0;y<H;y+=40){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke()}
+
+  enemies.forEach(e=>{
+    ctx.fillStyle=e.c;ctx.beginPath();ctx.arc(e.x,e.y,8,0,Math.PI*2);ctx.fill();
+    ctx.strokeStyle='#fff';ctx.lineWidth=1;ctx.stroke();
+    // HP bar
+    ctx.fillStyle='#f00';ctx.fillRect(e.x-6,e.y-12,12,2);
+    ctx.fillStyle='#0f0';ctx.fillRect(e.x-6,e.y-12,12*Math.max(0,e.h/e.mh),2);
+  });
+
+  if(player){
+    ctx.fillStyle='#4f8';ctx.beginPath();ctx.arc(player.x,player.y,12,0,Math.PI*2);ctx.fill();
+    ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.stroke();
+    ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(player.x-4,player.y-3,2,0,Math.PI*2);ctx.fill();
+    ctx.beginPath();ctx.arc(player.x+4,player.y-3,2,0,Math.PI*2);ctx.fill();
+  }
+  orbs.forEach(o=>{ctx.fillStyle='#0f0';ctx.beginPath();ctx.arc(o.x,o.y,5,0,Math.PI*2);ctx.fill()});
+  coins.forEach(g=>{ctx.fillStyle='#fc0';ctx.beginPath();ctx.arc(g.x,g.y,4,0,Math.PI*2);ctx.fill()});
+  fireballs.forEach(f=>{ctx.fillStyle='#fa0';ctx.beginPath();ctx.arc(f.x,f.y,6,0,Math.PI*2);ctx.fill();ctx.strokeStyle='#fff';ctx.lineWidth=1;ctx.stroke()});
+  dmgNums.forEach(dn=>{ctx.fillStyle=dn.cl;ctx.font='bold 14px monospace';ctx.globalAlpha=Math.max(0,1-dn.t);ctx.fillText(dn.v,dn.x-14,dn.y)});
+  ctx.globalAlpha=1;
+  document.getElementById('hud').innerText='W'+wave+' HP'+player.hp+'/'+player.mh+' $'+gold+' K'+kills+' LV'+level;
+}
+
+// START IMMEDIATELY
+document.getElementById('hud').innerText='1...';
+active=true;
+try{
+for(let i=0;i<5;i++)spawn();
+document.getElementById('hud').innerText='2...';
+let last=performance.now();
+document.getElementById('hud').innerText='3...';
+function loop(t){try{let dt=(t-last)/1000;last=t;up(dt);draw()}catch(e){document.getElementById('hud').innerText='ERR:'+e.message}requestAnimationFrame(loop)}
+requestAnimationFrame(loop);
+document.getElementById('hud').innerText='4...';
+}catch(e){document.getElementById('hud').innerText='CRASH:'+e.message}
+</script></body></html>
